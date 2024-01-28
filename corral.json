@@ -1,0 +1,27 @@
+{
+  "packages": [
+    "flying_pace"
+  ],
+  "deps": [
+    {
+      "locator": "github.com/ponylang/regex.git",
+      "version": "1.1.5"
+    },
+    {
+      "locator": "github.com/ponylang/http_server.git",
+      "version": "0.4.6"
+    },
+    {
+      "locator": "github.com/ponylang/logger.git",
+      "version": "1.0.1"
+    }
+  ],
+  "info": {
+    "description": "",
+    "homepage": "",
+    "license": "",
+    "documentation_url": "",
+    "version": "",
+    "name": ""
+  }
+}
