@@ -14,11 +14,13 @@ class _FPHandler is Handler
   var _request: (Request | None) = None
   var _body: ByteArrays = ByteArrays
   var _server: FPServer
+  let _router: URLRouter val
 
-  new create(server: FPServer, session': Session) => 
+  new create(server: FPServer, session': Session, router: URLRouter val) => 
     Debug("Handler was created")
     _session = session'
     _server = server
+    _router = router
 
   fun ref apply(request: Request val, request_id: USize val) =>
     _request = request
@@ -31,19 +33,29 @@ class _FPHandler is Handler
 
   fun ref finished(request_id: USize val) =>
     Debug("Request finished")
-    try
-      let request: Request = _request as Request
-      _server.handle_request(request, _body, request_id, _session)
+    match _request
+    | let request: Request =>
+
+      let handler = ResponseHandler(_session, request_id)
+      let responder =recover iso Responder(handler) end
+      _router.handle_request(request, _body, consume responder)
+      _request = None
+
+    | None => Debug("Finish called without request!")
     end
+
 
 class _FPHandlerFactory is HandlerFactory
   let server: FPServer
+  let router: URLRouter val
 
-  new create(server': FPServer tag) =>
+  new create(server': FPServer tag, router': URLRouter val) =>
     server = server'
-    
+    router = router'
+
   fun box apply(session: Session tag): _FPHandler ref^ =>
-    _FPHandler(server, session)
+    _FPHandler(server, session, router)
+
 
 class _FPServerNotify is ServerNotify
   let _server: FPServer
@@ -61,35 +73,20 @@ class _NoneLogger
     false
 
 actor FPServer
-  let _router: URLRouter
+  let router: URLRouter val
   let _server: Server
   let _logger: (_NoneLogger | Logger[String])
 
   new create(
-    router': URLRouter,
+    router': URLRouter val,
     auth: TCPListenAuth,
     config: ServerConfig,
     logger: (None | Logger[String]) = None
   ) =>
-    _router = router'
-    _server = Server(auth, _FPServerNotify(this), _FPHandlerFactory(this), config)
+    router = router'
+    _server = Server(auth, _FPServerNotify(this), _FPHandlerFactory(this, router'), config)
 
     match logger
     | let logger': Logger[String] =>  _logger = logger'
     | None => _logger = _NoneLogger
     end
-
-  be handle_request(request: Request, body: ByteArrays, request_id: USize val, session: Session) =>
-    _logger(Fine) and _logger.log(
-      "Handling request with id: " + request_id.string()
-    )
-
-    let p = Promise[ResponseType]
-    let handler = recover iso ResponseHandler(session, request_id) end
-
-    p.next[ResponseType]({(r: ResponseType) => 
-      Debug("Promise was fullfilled")
-      r
-    }).next[None](consume handler)
-
-    _router.handle_request(request, body, p)
