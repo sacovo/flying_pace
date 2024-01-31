@@ -31,6 +31,15 @@ class _FPHandler is Handler
     Debug("Received chunk of size: " + data.size().string())
     _body = _body + data
 
+  fun ref cancelled(request_id: USize val) =>
+    Debug("Request cancelled: " + request_id.string())
+
+  fun ref failed(reason: RequestParseError, request_id: USize val) =>
+    Debug("Request failed: " + request_id.string())
+
+  fun ref closed() =>
+    Debug("Session closed")
+
   fun ref finished(request_id: USize val) =>
     Debug("Request finished")
     match _request

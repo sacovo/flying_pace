@@ -14,10 +14,10 @@ class Responder
   new create(handler: ResponseHandler) =>
     _handler = handler
 
-  fun iso apply(response: OneShotResponse) =>
+  fun val apply(response: OneShotResponse) =>
     _handler(response)
 
-  fun iso stream(response: StreamingResponse tag) =>
+  fun val stream(response: StreamingResponse tag) =>
     _handler.stream(response)
 
 
@@ -38,6 +38,7 @@ actor ResponseHandler
     _handle_streaming(r)
 
   fun cancelled(request_id': USize val) =>
+    Debug("Request was cancelled")
     match _streaming
     | let s: StreamingResponse tag =>
       s.cancel(request_id')

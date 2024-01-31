@@ -36,7 +36,7 @@ class URLRouter
   let _default_route: DefaultHandler val
   let _redirect_to_slash: Bool
 
-  new create(default_route': DefaultHandler iso = NotFoundHandler, redirect_to_slash: Bool = true) =>
+  new create(default_route': DefaultHandler iso = NotFoundHandler, redirect_to_slash: Bool = false) =>
     _default_route = consume default_route'
     _redirect_to_slash = redirect_to_slash
 
