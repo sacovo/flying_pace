@@ -4,14 +4,13 @@ This is a small framework for developing web-servers using the pony programming 
 
 ## TODO
 
-- wrapping request and response?
-- include templating engine
-- file handler for folders
-- error handling?
-- streaming responses
-- get parameter handling
-- json decoding
-- form submission handling
-- file uploads
-- middleware
-- headers
+- [ ] wrapping request and response?
+- [x] include templating engine
+- [x] file handler for folders
+- [ ] error handling?
+- [x] streaming responses
+- [x] get parameter handling
+- [x] json decoding
+- [x] form submission handling
+- [ ] file uploads
+- [ ] middleware
