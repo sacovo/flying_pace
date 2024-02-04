@@ -25,7 +25,7 @@ class iso _TestTemplate is UnitTest
 
     let ft = FileTemplates(f.FilePath(f.FileAuth(h.env.root), "templates"))
 
-    match ft.render("index.html", TestRequest, v)
+    match ft.render("index.html", BuildableRequest, v)
     | StatusInternalServerError => ""
     else
       error
@@ -33,7 +33,7 @@ class iso _TestTemplate is UnitTest
 
     v("values") = Templates.string_values(["Hallo"; "Welt"].values())
 
-    match ft.render("index.html", TestRequest, v)
+    match ft.render("index.html", BuildableRequest, v)
     | (let h': ResponseBuilderHeaders iso, let s: String val) =>
       s.find(name')?
       s.find("Welt")?
@@ -41,7 +41,7 @@ class iso _TestTemplate is UnitTest
       error
     end
 
-    match ft.render("does_not_exist.html", TestRequest, v)
+    match ft.render("does_not_exist.html", BuildableRequest, v)
     | StatusInternalServerError => ""
     else
       error
