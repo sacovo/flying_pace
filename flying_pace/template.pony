@@ -4,6 +4,15 @@ use "http_server"
 use "templates"
 
 
+primitive Functions
+
+  fun val upper(s: String val): String val =>
+    s.upper()
+
+  fun val titel(s: String val): String val =>
+    s.upper()
+
+
 class val FileTemplates
   let _base: f.FilePath val
 

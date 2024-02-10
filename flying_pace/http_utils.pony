@@ -1,6 +1,7 @@
 use "debug"
 
 use "http_server"
+use "regex"
 use "valbytes"
 
 
@@ -41,3 +42,38 @@ class RedirectTo
       end,
       ""
     )
+
+
+actor _MethodRequiredHandler is URLHandler
+  let _handler: URLHandler val
+  let methods: Array[Method val] val
+
+  new create(handler: URLHandler val, m': Array[Method val] val) =>
+    _handler = handler
+    methods = m'
+
+  be apply(r: Request val, m: Match val, b: ByteArrays, p: ResponseHandler tag) =>
+    if methods.contains(r.method()) then
+      _handler(r, m, b, p)
+    else
+      p(StatusMethodNotAllowed)
+    end
+
+
+class MethodsRequired
+  let m: Array[Method] val
+
+  new create(m': Array[Method val] val) => m = m'
+
+  fun apply(handler: URLHandler val): URLHandler val =>
+    _MethodRequiredHandler(handler, m)~apply()
+
+
+primitive POSTRequired
+  fun apply(handler: URLHandler val): URLHandler val =>
+    _MethodRequiredHandler(handler, [POST])~apply()
+
+
+primitive GETRequired
+  fun apply(handler: URLHandler val): URLHandler val =>
+    _MethodRequiredHandler(handler, [GET])~apply()

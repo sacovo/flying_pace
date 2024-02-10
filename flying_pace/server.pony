@@ -15,21 +15,52 @@ class _FPHandler is Handler
   var _body: ByteArrays = ByteArrays
   var _handler: (ResponseHandler tag | None) = None
   let _router: URLRouter val
+  var _route: (URLHandler tag | None) = None
+  let _max_request_size: USize val
 
-  new create(session': Session, router: URLRouter val) => 
+  new create(session': Session, router: URLRouter val, max_request_size: USize val) => 
     Debug("Handler was created")
     _session = session'
     _router = router
+    _max_request_size = max_request_size
 
   fun ref apply(request: Request val, request_id: USize val) =>
+    Debug(request.method().string() + " " + request.uri().path)
+    for header in request.headers() do
+      (let k: String, let v: String) = header
+      Debug(k + ": " + v)
+    end
     _request = request
     _body = ByteArrays
-    _handler = _ResponseHandler(_session, request_id)
-    Debug("Handler was applyed")
+    _handler = match request.header("Upgrade")
+    | "websocket" =>
+      let ws_handler = _WSHandler(
+        _session,
+        request_id,
+        _router,
+        request
+      )
+      ws_handler.start()
+      ws_handler
+    else
+      _ResponseHandler(
+        _session,
+        request_id,
+        _router,
+        request,
+        _max_request_size
+      )
+    end
+    Debug("Handler was applied")
 
   fun ref chunk(data: ByteSeq val, request_id: USize val) =>
-    Debug("Received chunk of size: " + data.size().string())
-    _body = _body + data
+    Debug("Receiving chunk")
+    Debug(data)
+    if data.size() == 0 then return end
+
+    match _handler
+    | let h: ResponseHandler tag => h.chunk(data)
+    end
 
   fun ref cancelled(request_id: USize val) =>
     match _handler
@@ -57,25 +88,21 @@ class _FPHandler is Handler
 
   fun ref finished(request_id: USize val) =>
     Debug("Request finished")
-    match (_request, _handler)
-    | (let request: Request, let handler: ResponseHandler tag) =>
-
-      _router.handle_request(request, _body, handler)
-      _request = None
-
-    else
-      Debug("Finish called without request!")
+    match _handler
+    | let h: ResponseHandler tag => h.finished(request_id)
     end
 
 
 class _FPHandlerFactory is HandlerFactory
   let _router: URLRouter val
+  let _max_request_size: USize val
 
-  new create(router': URLRouter val) =>
+  new create(router': URLRouter val, max_request_size: USize val) =>
     _router = router'
+    _max_request_size = max_request_size
 
   fun box apply(session: Session tag): _FPHandler ref^ =>
-    _FPHandler(session, _router)
+    _FPHandler(session, _router, _max_request_size)
 
 
 class _FPServerNotify is ServerNotify
@@ -102,9 +129,10 @@ actor FPServer
     router': URLRouter val,
     auth: TCPListenAuth,
     config: ServerConfig,
+    max_request_size: USize val = 500_000_000,
     logger: (None | Logger[String]) = None
   ) =>
-    let server = Server(auth, _FPServerNotify(this), _FPHandlerFactory(router'), config)
+    let server = Server(auth, _FPServerNotify(this), _FPHandlerFactory(router', max_request_size), config)
 
     match logger
     | let logger': Logger[String] =>  _logger = logger'

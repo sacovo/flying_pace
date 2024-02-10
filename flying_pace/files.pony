@@ -1,6 +1,6 @@
 use "collections"
-use "debug"
 use "time"
+use "debug"
 use f = "files"
 
 use "http_server"
@@ -9,37 +9,110 @@ use "regex"
 use "valbytes"
 
 
+class iso _FileStreamNotify is TimerNotify
+  let _stream: FileStream
+
+  new iso create(stream: FileStream tag) =>
+    _stream = stream
+
+  fun ref apply(timer: Timer ref, count: U64 val): Bool =>
+    _stream.read_chunk()
+    true
+
+
 actor FileStream is StreamingResponse
-  var _buffer: Array[U8 val] iso = Array[U8 val](1024 * 5) 
+  let _file: (f.File ref | None)
+
   var _session: (Session | None) = None
   var _request_id: (USize val | None) = None
   var _sent: USize val = 0
-  let _response: ResponseBuilderHeaders ref
 
-  new create(response': ResponseBuilderHeaders iso) =>
-    _response = consume response'
+  let _request: Request
 
-  be send_chunk(b: Array[U8 val] val) =>
-    _sent = _sent + b.size()
-    Debug("Sent: " + _sent.string())
-    match (_session, _request_id)
-    | (let session: Session, let request_id: USize val) =>
-        session.send_chunk(consume b, request_id)
+  let _cache: Bool
+  let _max_age: USize val
+
+  let _timers: Timers
+  var _timer: (Timer tag | None) = None
+
+  let _chunk_size: USize val
+  let _read_timeout: USize val
+
+  new create(
+    path: f.FilePath,
+    request: Request,
+    cache: Bool,
+    max_age: USize val,
+    timers: Timers,
+    chunk_size: USize val,
+    read_timeout: USize val
+  ) =>
+    _file = match f.OpenFile(path)
+    | let file: f.File => file
     else
-      _buffer.append(consume b)
+      None
+    end
+    _cache = cache
+    _request = request
+    _max_age = max_age
+    _timers = timers
+    _chunk_size = chunk_size
+    _read_timeout = read_timeout
+
+  fun ref response(): ResponseBuilderHeaders ref =>
+    match _file
+    | let file: f.File =>
+      if _cache then
+        let etag = _get_etag(file)
+
+        if _check_etag(_request, etag) then
+          Responses.builder().set_status(StatusNotModified).add_header("Content-Length", "0")
+        else
+          Responses.builder()
+            .set_status(StatusOK)
+            .add_header("Etag", etag)
+            .add_header("Cache-Control", "max-age="+_max_age.string()+", must-revalidate")
+            .add_header("Content-Length", file.size().string())
+        end
+      else
+        Responses.builder()
+          .set_status(StatusOK)
+          .add_header("Content-Length", file.size().string())
+      end
+    else
+      Responses.builder()
+        .set_status(StatusNotFound)
+        .add_header("Content-Length", "0")
     end
 
   be apply(session: Session, request_id: USize val) =>
     _session = session
     _request_id = request_id
-    let data = _buffer = Array[U8 val]()
 
-    session.send_chunk(consume data, request_id)
+    let timer = Timer(_FileStreamNotify(this), 1, 5_000)
+    _timer = timer
+    _timers(consume timer)
 
-  fun ref response(): ResponseBuilderHeaders ref =>
-    _response
+  be send_chunk(b: Array[U8 val] val) =>
+    match (_session, _request_id)
+    | (let session: Session, let request_id: USize val) =>
+        session.send_chunk(consume b, request_id)
+    end
 
-  be done() =>
+  be read_chunk() =>
+    match _file
+    | let file: f.File =>
+      if file.errno() is f.FileOK then
+        send_chunk(file.read(500_000))
+      else
+        dispose()
+      end
+    end
+
+  be cancel(request_id: USize val) =>
+    dispose()
+
+  be dispose() =>
     match (_session, _request_id)
     | (let s: Session, let r: USize val) =>
       s.send_finished(r)
@@ -47,8 +120,24 @@ actor FileStream is StreamingResponse
       _request_id = None
     end
 
-  be dispose() =>
-    Debug("Disposing file stream")
+    match _timer
+    | let timer: Timer tag => _timers.cancel(timer)
+    end
+
+    match _file
+    | let file: f.File => file.dispose()
+    end
+
+  fun box _get_etag(file: f.File): String val =>
+    (let t, let n) = try file.info()?.modified_time else Time.now() end
+    t.string()
+
+  fun box _check_etag(r: Request val, etag: String val): Bool =>
+    match r.header("If-None-Match")
+    | let s: String val => etag == s
+    else
+      false
+    end
 
 
 interface NameValidator
@@ -61,19 +150,26 @@ class ServeDirectory is URLHandler
   let _max_age: USize
   let _validator: (NameValidator box | None)
   let _list_dir: Bool
+  let _timers: Timers = Timers
+  let _read_timeout: USize val
+  let _chunk_size: USize val
 
   new create(
     path: f.FilePath,
     cache: Bool = true,
     max_age: USize = 0,
     validator: (NameValidator box | None) = None,
-    list_dir: Bool = false
+    list_dir: Bool = false,
+    chunk_size: USize val = 500_000_000,
+    read_timeout: USize val = 5_000
   ) =>
     _base = path
     _cache = cache
     _max_age = max_age
     _validator = validator
     _list_dir = list_dir
+    _chunk_size = chunk_size
+    _read_timeout = read_timeout
 
   fun _validate_name(name: String val): Bool =>
     match _validator
@@ -137,46 +233,11 @@ class ServeDirectory is URLHandler
     let path = try _base.join(name)? else return p(StatusNotFound) end
     let info = try f.FileInfo(path)? else return p(StatusNotFound) end
 
-    if info.directory then
-      if _list_dir then
-        try show_file_listings(path, name, p)? end
-      else
-        p(StatusNotFound)
-      end
-    end
-
-    match f.OpenFile(path)
-    | let file: f.File =>
-        let response = if _cache then
-          let etag = _get_etag(file)
-
-          if _check_etag(r, etag) then
-            return p(StatusNotModified)
-          end
-
-          recover iso Responses.builder()
-            .set_status(StatusOK)
-            .add_header("Etag", etag)
-            .add_header("Cache-Control", "max-age="+_max_age.string()+", must-revalidate")
-            .add_header("Content-Length", file.size().string())
-          end
-        else
-          recover iso
-          Responses.builder()
-            .set_status(StatusOK)
-            .add_header("Content-Length", file.size().string())
-          end
-        end
-
-        let stream = FileStream(consume response)
-        p.stream(stream)
-
-        while file.errno() is f.FileOK do
-          stream.send_chunk(file.read(1024 * 10))
-        end
-
-        stream.done()
-        file.dispose()
+    if info.file then
+      let stream = FileStream(path, r, _cache, _max_age, _timers, _chunk_size, _read_timeout)
+      p.stream(stream)
+    elseif info.directory and _list_dir then
+      try show_file_listings(path, name, p)? else p(ServerError("Error in file listing")) end
     else
       p(StatusNotFound)
     end

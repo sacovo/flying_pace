@@ -20,3 +20,5 @@ actor Main is TestList
     test(_TestBasicAuth)
     test(_TestTemplate)
     test(_TestParams)
+    test(_TestWS)
+    test(_TestDecode)

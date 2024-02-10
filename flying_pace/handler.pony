@@ -36,6 +36,9 @@ trait StreamingResponse
     """
     """
 
+trait WSResponse is StreamingResponse
+  be message(msg: WSMessage val)
+
 
 trait Responsable
   fun response(): (ResponseBuilderHeaders iso^, ResponseBody)
@@ -60,22 +63,78 @@ interface ResponseHandler
   be cancel(request_id: USize)
   be dispose()
 
+  be chunk(data: ByteSeq val)
+
+  be finished(request_id: USize val)
+
+
+primitive ResponseHelper
+
+  fun ensure_bytes(b: ResponseBody): ByteArrays =>
+    match b
+    | let b': ByteArrays => b'
+    | let b': String => ByteArrays(b'.array())
+    end
+
+  fun to_byte_iter(h: ResponseBuilderHeaders, b: ResponseBody): ByteSeqIter val =>
+    h.add_header("Content-Length", b.size().string())
+      .finish_headers()
+      .add_chunk(b.array())
+      .build()
+
+  fun get_response(r: OneShotResponse): (ResponseBuilderHeaders, ResponseBody) =>
+    match r
+    | (let h: ResponseBuilderHeaders iso, let b: ResponseBody) => (consume h, b)
+    | (let b: ResponseBody) => (Responses.builder().set_status(StatusOK), b)
+    | (let s: Status) => (Responses.builder().set_status(s), s.string())
+    end
+
 
 actor _ResponseHandler is ResponseHandler
   let _session: Session
   let _request_id: USize val
+  var _body: ByteArrays = ByteArrays
   var _streaming: (StreamingResponse tag | None) = None
+  let _router: URLRouter val
+  let _request: Request val
+  let _max_request_size: USize val
+
   embed _middlewares: Array[Middleware] = Array[Middleware]
 
-  new create(session': Session, request_id': USize val) =>
+  new create(
+    session': Session,
+    request_id': USize val,
+    router: URLRouter val,
+    request: Request val,
+    max_request_size: USize val
+  ) =>
     _session = session'
+    _request = request
     _request_id = request_id'
+    _router = router
+    _max_request_size = max_request_size
+
+  be chunk(data: ByteSeq val) =>
+    Debug("Received chunk of size: " + data.size().string())
+    if _body.size() <= _max_request_size then
+      _body = _body + data
+    end
+
+  be finished(request_id: USize val) =>
+    if _body.size() > _max_request_size then
+      this(StatusRequestEntityTooLarge)
+    else
+      _router.handle_request(_request, _body, this)
+    end
 
   be apply(r: OneShotResponse) =>
-    (let headers: ResponseBuilderHeaders, let body: ResponseBody) = _get_response(consume r)
-    let data = _to_byte_iter(_apply_middlware(headers), body)
+    (let headers: ResponseBuilderHeaders, let body: ResponseBody) = ResponseHelper.get_response(consume r)
+    let data = ResponseHelper.to_byte_iter(_apply_middlware(headers), body)
     _session.send_raw(data, _request_id)
     _session.send_finished(_request_id)
+
+  be stream(r: StreamingResponse tag) =>
+    _handle_streaming(r)
 
   fun ref _apply_middlware(headers: ResponseBuilderHeaders): ResponseBuilderHeaders =>
     var headers' = headers
@@ -84,9 +143,6 @@ actor _ResponseHandler is ResponseHandler
     end
     headers'
 
-  be stream(r: StreamingResponse tag) =>
-    _handle_streaming(r)
-
   be cancel(request_id': USize val) =>
     Debug("Request was cancelled")
     match _streaming
@@ -94,24 +150,6 @@ actor _ResponseHandler is ResponseHandler
       s.cancel(request_id')
     end
 
-  fun _ensure_bytes(b: ResponseBody): ByteArrays =>
-    match b
-    | let b': ByteArrays => b'
-    | let b': String => ByteArrays(b'.array())
-    end
-
-  fun _to_byte_iter(h: ResponseBuilderHeaders, b: ResponseBody): ByteSeqIter val =>
-    h.add_header("Content-Length", b.size().string())
-      .finish_headers()
-      .add_chunk(b.array())
-      .build()
-
-  fun _get_response(r: OneShotResponse): (ResponseBuilderHeaders, ResponseBody) =>
-    match r
-    | (let h: ResponseBuilderHeaders iso, let b: ResponseBody) => (consume h, b)
-    | (let b: ResponseBody) => (Responses.builder().set_status(StatusOK), b)
-    | (let s: Status) => (Responses.builder().set_status(s), s.string())
-    end
 
   fun ref _handle_streaming(r: StreamingResponse tag) =>
     r.init(_session, _request_id)

@@ -25,6 +25,9 @@ interface DefaultHandler
   fun box apply(r: Request val, b: ByteArrays, p: ResponseHandler tag)
 
 
+type PathHandler is ((Match val, URLHandler box) | (DefaultHandler box))
+
+
 class URLRouter
   embed _routes: Array[Route] iso = recover Array[Route] end
   let _default_route: DefaultHandler val
@@ -40,21 +43,20 @@ class URLRouter
   fun ref add_many(routes: Array[Route] iso) =>
     _routes.append(consume routes)
 
-  fun val _find_matching_handler(path: String val):
-    ((Match val, URLHandler box) | (None, DefaultHandler box)) =>
+  fun val find_matching_handler(path: String val): PathHandler =>
     for (regex, handler) in _routes.values() do
       try
         return (recover val regex(path)? end, handler)
       end
     end
     Debug("No matching route found!")
-    (None, _default_route)
+    _default_route
 
   fun val handle_request(r: Request val, b: ByteArrays, p: ResponseHandler tag) =>
     let path = r.uri().path
     Debug("Path: " + path)
 
-    match _find_matching_handler(path)
+    match find_matching_handler(path)
     | (let m: Match val, let handler: URLHandler box) => return handler(r, m, b, p)
     end
 

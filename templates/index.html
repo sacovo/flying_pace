@@ -11,6 +11,17 @@
 <body>
   <h1>{{ name }}!</h1>
   {{ for v in values }}{{ v }}{{ end }}
+
+  <div class="counter">
+    <button hx-get="/dec/" hx-trigger="click" hx-target="#count">-</button>
+    <span id="count">{{ count }}</span>
+    <button hx-get="/inc/" hx-trigger="click" hx-target="#count">+</button>
+  </div>
+
+  <script src="https://unpkg.com/htmx.org@1.9.10"
+    integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
+    crossorigin="anonymous"></script>
 </body>
+
 
 </html>
