@@ -12,8 +12,8 @@
       "version": "1.2.2"
     },
     {
-      "locator": "github.com/sacovo/http_server.git",
-      "version": "756ed9cbb9f0a5034e0210672d1de41a8be585b0"
+      "locator": "github.com/ponylang/http_server.git",
+      "version": "67094fe923d4ae0afa75034bbf3e7d57714ee4d8"
     },
     {
       "locator": "github.com/ponylang/json.git",

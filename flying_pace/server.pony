@@ -30,9 +30,11 @@ class _FPHandler is Handler
       (let k: String, let v: String) = header
       Debug(k + ": " + v)
     end
+
     _request = request
     _body = ByteArrays
-    _handler = match request.header("Upgrade")
+
+    match request.header("Upgrade")
     | "websocket" =>
       let ws_handler = _WSHandler(
         _session,
@@ -40,10 +42,11 @@ class _FPHandler is Handler
         _router,
         request
       )
+
       ws_handler.start()
-      ws_handler
+      _session.upgrade(WSTCPNotify(ws_handler))
     else
-      _ResponseHandler(
+      _handler = _ResponseHandler(
         _session,
         request_id,
         _router,
@@ -51,13 +54,8 @@ class _FPHandler is Handler
         _max_request_size
       )
     end
-    Debug("Handler was applied")
 
   fun ref chunk(data: ByteSeq val, request_id: USize val) =>
-    Debug("Receiving chunk")
-    Debug(data)
-    if data.size() == 0 then return end
-
     match _handler
     | let h: ResponseHandler tag => h.chunk(data)
     end

@@ -36,8 +36,10 @@ trait StreamingResponse
     """
     """
 
+
 trait WSResponse is StreamingResponse
   be message(msg: WSMessage val)
+  be close(msg: WSMessage val)
 
 
 trait Responsable

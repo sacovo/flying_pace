@@ -11,6 +11,72 @@ use "http_server"
 use "time"
 
 
+actor WSTimerResponse is WSResponse
+  let _timers: Timers tag
+  var _timer: (Timer tag  | None) = None
+  var _counter: Counter tag
+  var _session: (Session tag | None) = None
+  var _rid: USize val = 0
+
+  new create(timers: Timers, counter: Counter tag) =>
+    _counter = counter
+    _timers = timers
+
+  be apply(session: Session, request_id: USize val) =>
+    """
+    """
+    _session =  session
+    _rid = request_id
+
+    let notify = object iso is TimerNotify
+      var c: USize val = 1
+      fun ref apply(timer: Timer, count: U64): Bool => 
+        Debug("Timer..")
+        _counter.inc()
+        let p = Promise[ISize val]
+        let r' = request_id
+        let s' = session
+        let c' = _counter
+
+        p.next[None]({(c: ISize val) => 
+          let content = ByteArrays(c.string().array())
+          let msg = WSMessage(content, Text, true)
+          try
+            msg.send_to(s', r')?
+          else
+            Debug("Error sending message to session")
+          end
+
+        })
+        c'.get(p)
+
+        true
+    end
+    let timer = Timer(consume notify, 1_000_000_000, 1_000_000_000)
+    _timer = timer
+    _timers(consume timer)
+
+  be close(msg: WSMessage val) =>
+    try
+      _timers.cancel(_timer as Timer tag)
+    end
+    
+
+  be message(msg: WSMessage val) =>
+    """
+    """
+    match msg.string()
+    | "+" => _counter.inc()
+    | "-" => _counter.dec()
+    else
+      let msg' = WSMessage.from_string("Invalid command!")
+      try
+        msg'.send_to(_session as Session, _rid)?
+      end
+    end
+
+
+
 actor Counter
   var _counter: ISize = 0
 
@@ -23,6 +89,7 @@ actor Counter
 class App
   let _counter: Counter = Counter
   let _templates: FileTemplates val
+  let _timers: Timers = Timers
 
   new create(templates: FileTemplates val) =>
     _templates = templates
@@ -64,6 +131,10 @@ class App
   fun box dec(r: Request val, m: Match val, b: ByteArrays, p: ResponseHandler tag) =>
     _counter.dec()
     count(r, m, b, p)
+
+  fun box ws_timer(r: Request val, m: Match val, b: ByteArrays, p: ResponseHandler tag) =>
+    Debug("Returning streaming")
+    p.stream(WSTimerResponse(_timers, _counter))
 
   fun box timed(r: Request val, m: Match val, b: ByteArrays, p: ResponseHandler tag) =>
     let timers = Timers
@@ -118,7 +189,7 @@ class App
 
 actor Main
   new create(env: Env) =>
-    let config = ServerConfig("0.0.0.0", "8080" where allow_upgrade' = true)
+    let config = ServerConfig("0.0.0.0", "8080")
     
     let templates = FileTemplates(f.FilePath(f.FileAuth(env.root), "templates/"))
     let app: App val = App(templates)
@@ -144,6 +215,7 @@ actor Main
           Path("^/form/$", app~template(where name="form.html"))?
           Path("^/post-demo/$", app~post_example())?
           Path("^/json/$", app~json_example())?
+          Path("^/ws/$", app~ws_timer())?
         ])
       else
         env.out.print("Error in creating routes!")

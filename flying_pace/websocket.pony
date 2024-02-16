@@ -27,7 +27,7 @@ primitive Binary
 
 primitive Close
   fun box string(): String iso^ => "Close".clone()
-  fun box value(): U8 val => 0x0
+  fun box value(): U8 val => 0x8
 
 primitive Ping
   fun box string(): String iso^ => "Ping".clone()
@@ -48,8 +48,15 @@ class WSMessage
     opcode = opcode'
     fin = fin'
 
+  new val from_string(string': String val) =>
+    content = ByteArrays(string'.array())
+    opcode = Text
+    fin = true
+
   fun val add(msg: WSMessage val) =>
     WSMessage(ByteArrays(content, msg.content), opcode, msg.fin)
+
+  fun val string(): String val => content.string()
 
   fun val send_to(session: Session, request_id: USize val)? =>
     let data = encode()?
@@ -215,6 +222,7 @@ actor _WSHandler is ResponseHandler
         .build(),
       _request_id
     )
+    _router.handle_request(_request, ByteArrays, this)
     
 
   be apply(r: OneShotResponse) =>
@@ -226,6 +234,7 @@ actor _WSHandler is ResponseHandler
     """
     try
       _streaming = r as WSResponse tag
+      r(_session, _request_id)
     end
 
   be chunk(data: ByteSeq val) =>
@@ -233,52 +242,47 @@ actor _WSHandler is ResponseHandler
     """
     _buffer = _buffer + data
 
-    (let result, _buffer) = try WSDecoder.decode(_buffer)? else Debug("Error in parsing msg"); return end
+    while _buffer.size() > 0 do
+      (let result, _buffer) = try WSDecoder.decode(_buffer)? else Debug("Error in parsing msg"); return end
 
-    let msg' = match result
-    | let m: WSMessage val => m
-    else
-      return
+      let msg' = match result
+      | let m: WSMessage val => m
+      else
+        return
+      end
+
+      // Handle Continuation
+      match _msg
+      | let m: WSMessage val => _msg = m + msg'
+      else
+        _msg = msg'
+      end
+
+      let msg = try _msg as WSMessage val else return end
+
+      if not msg.fin then
+        Debug("WSMessage is not done, continue...")
+        return
+      end
+
+      Debug("WSMessage finished")
+
+      _msg = None
+
+      Debug(msg.opcode)
+
+      match msg.opcode
+      | Ping => _send_pong(msg)
+      | Close => _close(msg)
+      | Binary => _send_msg(msg)
+      | Text => _send_msg(msg)
+      end
     end
-
-
-    match _msg
-    | let m: WSMessage val => _msg = m + msg'
-    else
-      _msg = msg'
-    end
-
-    let msg = try _msg as WSMessage val else return end
-
-    if not msg.fin then
-      Debug("WSMessage is not done, continue...")
-      return
-    end
-
-    Debug("WSMessage finished")
-
-    _msg = None
-
-    Debug(msg.opcode)
-
-    match msg.opcode
-    | Ping => _send_pong(msg)
-    | Close => _close()
-    | Binary => _send_msg(msg)
-    | Text => _send_msg(msg)
-    end
-
 
   be _send_msg(msg: WSMessage val) =>
     Debug("Sending message")
     match _streaming
     | let s: WSResponse tag => s.message(msg)
-    end
-
-    try
-      msg.send_to(_session, _request_id)?
-    else
-      Debug("Error sending msg.")
     end
 
   be _send_pong(msg: WSMessage val) =>
@@ -292,9 +296,18 @@ actor _WSHandler is ResponseHandler
     end
 
 
-  be _close() =>
+  be _close(msg: WSMessage val) =>
     """
     """
+    let close = WSMessage(ByteArrays, Close, true)
+
+    try
+      msg.send_to(_session, _request_id)?
+    end
+
+    match _streaming
+    | let s: WSResponse tag => s.close(msg)
+    end
 
   be finished(request_id: USize val) =>
     """
@@ -307,3 +320,22 @@ actor _WSHandler is ResponseHandler
   be dispose() =>
     """
     """
+
+class WSTCPNotify is TCPConnectionNotify
+  let _handler: _WSHandler
+
+  new create(handler: _WSHandler) =>
+    _handler = handler
+
+  fun ref received(
+    conn: TCPConnection ref,
+    data: Array[U8 val] iso,
+    times: USize)
+    : Bool
+  =>
+    Debug("Data recevied in tcp notify")
+    _handler.chunk(consume data)
+    true
+
+  fun ref connect_failed(conn: TCPConnection ref) =>
+    None
